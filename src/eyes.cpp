@@ -44,44 +44,50 @@ void draw_happy(int cx, int cy) {
 }
 
 // ================================================================
-//  SAD EYE — sharp diagonal brow like the image + tear
-//  LEFT eye:  brow goes  high-left  → low-right  (inner corner low)
-//  RIGHT eye: brow goes  low-left   → high-right (inner corner low)
+//  SAD EYE
+//  Brow: inner corner UP toward nose, outer corner LOW → universally sad
+//  LEFT eye:  /  (inner=right HIGH, outer=left LOW)
+//  RIGHT eye: \  (inner=left  HIGH, outer=right LOW)
+//  Eyelid droops heavily over the top of the eye.
 // ================================================================
 void draw_sad(int cx, int cy, bool leftEye, bool tear) {
-    drawBaseEye(cx, cy);
+    // base eye, pupil shifted slightly down for a downcast look
+    display.drawCircle(cx, cy + 2, 15, SH110X_WHITE);
+    display.fillCircle(cx, cy + 2, 11, SH110X_WHITE);
+    display.fillCircle(cx, cy + 4,  7, SH110X_BLACK);
+    display.fillCircle(cx + 3, cy + 1, 2, SH110X_WHITE);   // small highlight
+    display.drawFastHLine(cx - 14, cy + 16, 29, SH110X_WHITE); // bottom lash line
 
-    // flat eyelid
-    display.fillRect(cx - 17, cy - 30, 34, 18, SH110X_BLACK);
-    display.drawFastHLine(cx - 16, cy - 12, 33, SH110X_WHITE);
-    display.drawFastHLine(cx - 16, cy - 11, 33, SH110X_WHITE);
+    // heavy drooping eyelid — covers top 60% of the eye
+    display.fillRect(cx - 17, cy - 30, 34, 24, SH110X_BLACK);
+    display.drawFastHLine(cx - 15, cy - 6,  31, SH110X_WHITE);
+    display.drawFastHLine(cx - 15, cy - 5,  31, SH110X_WHITE);
+    display.drawFastHLine(cx - 15, cy - 4,  31, SH110X_WHITE); // thick lid edge
 
-    // lashes
-    display.drawLine(cx - 14, cy - 11, cx - 17, cy - 17, SH110X_WHITE);
-    display.drawLine(cx - 6,  cy - 12, cx - 7,  cy - 18, SH110X_WHITE);
-    display.drawLine(cx,      cy - 12, cx,      cy - 19, SH110X_WHITE);
-    display.drawLine(cx + 6,  cy - 12, cx + 7,  cy - 18, SH110X_WHITE);
-    display.drawLine(cx + 14, cy - 11, cx + 17, cy - 17, SH110X_WHITE);
+    // droopy lashes — hang downward from the lid
+    display.drawLine(cx - 13, cy - 5, cx - 15, cy - 9,  SH110X_WHITE);
+    display.drawLine(cx - 5,  cy - 6, cx - 5,  cy - 11, SH110X_WHITE);
+    display.drawLine(cx,      cy - 6, cx,      cy - 12, SH110X_WHITE);
+    display.drawLine(cx + 5,  cy - 6, cx + 5,  cy - 11, SH110X_WHITE);
+    display.drawLine(cx + 13, cy - 5, cx + 15, cy - 9,  SH110X_WHITE);
 
-    // ---- sharp diagonal eyebrow ----
-    // left eye:  outer(left) is HIGH, inner(right) is LOW  → \ shape
-    // right eye: outer(right) is HIGH, inner(left) is LOW  → / shape
+    // sad eyebrow: inner corner UP, outer corner DOWN
     if (leftEye) {
-        // \ shaped brow
-        display.drawLine(cx - 14, cy - 26, cx + 10, cy - 18, SH110X_WHITE);
-        display.drawLine(cx - 14, cy - 25, cx + 10, cy - 17, SH110X_WHITE);
-        display.drawLine(cx - 14, cy - 24, cx + 10, cy - 16, SH110X_WHITE);
+        // / brow — left eye, inner (right) side is high
+        display.drawLine(cx - 14, cy - 16, cx + 12, cy - 26, SH110X_WHITE);
+        display.drawLine(cx - 14, cy - 15, cx + 12, cy - 25, SH110X_WHITE);
+        display.drawLine(cx - 14, cy - 14, cx + 12, cy - 24, SH110X_WHITE);
     } else {
-        // / shaped brow
-        display.drawLine(cx - 10, cy - 18, cx + 14, cy - 26, SH110X_WHITE);
-        display.drawLine(cx - 10, cy - 17, cx + 14, cy - 25, SH110X_WHITE);
-        display.drawLine(cx - 10, cy - 16, cx + 14, cy - 24, SH110X_WHITE);
+        // \ brow — right eye, inner (left) side is high
+        display.drawLine(cx - 12, cy - 26, cx + 14, cy - 16, SH110X_WHITE);
+        display.drawLine(cx - 12, cy - 25, cx + 14, cy - 15, SH110X_WHITE);
+        display.drawLine(cx - 12, cy - 24, cx + 14, cy - 14, SH110X_WHITE);
     }
 
-    // tear drop
+    // big teardrop
     if (tear) {
-        display.drawLine(cx + 8, cy + 16, cx + 8, cy + 20, SH110X_WHITE);
-        display.fillCircle(cx + 8, cy + 23, 3, SH110X_WHITE);
+        display.drawLine(cx + 7, cy + 17, cx + 7, cy + 23, SH110X_WHITE);
+        display.fillCircle(cx + 7, cy + 27, 4, SH110X_WHITE);
     }
 }
 
@@ -141,6 +147,133 @@ void show_closing() {
 }
 
 // ================================================================
+//  STAR EYES
+// ================================================================
+
+// 4-point sparkle cross
+static void draw_sparkle(int cx, int cy, int r) {
+    display.drawLine(cx - r, cy,     cx + r, cy,     SH110X_WHITE);
+    display.drawLine(cx,     cy - r, cx,     cy + r, SH110X_WHITE);
+    display.drawLine(cx - r, cy - r, cx + r, cy + r, SH110X_WHITE);
+    display.drawLine(cx - r, cy + r, cx + r, cy - r, SH110X_WHITE);
+}
+
+// 5-pointed star outline + filled center
+static void draw_star_shape(int cx, int cy, int R, int r) {
+    // outer and inner vertices, ×1000 unit circle, top-first clockwise
+    static const int OX[] = {    0,  951,  588, -588, -951 };
+    static const int OY[] = { -1000, -309,  809,  809, -309 };
+    static const int IX[] = {  588,  951,    0, -951, -588 };
+    static const int IY[] = { -809,  309, 1000,  309, -809 };
+    for (int i = 0; i < 5; i++) {
+        int ni = (i + 1) % 5;
+        display.drawLine(cx + OX[i] *R/1000, cy + OY[i] *R/1000,
+                         cx + IX[i] *r/1000, cy + IY[i] *r/1000, SH110X_WHITE);
+        display.drawLine(cx + IX[i] *r/1000, cy + IY[i] *r/1000,
+                         cx + OX[ni]*R/1000, cy + OY[ni]*R/1000, SH110X_WHITE);
+    }
+    display.fillCircle(cx, cy, r - 1, SH110X_WHITE);
+    display.fillCircle(cx, cy, 3, SH110X_BLACK);  // pupil
+    display.fillCircle(cx + 2, cy - 2, 1, SH110X_WHITE);  // glint
+}
+
+struct SparklePos { int8_t dx, dy, r; };
+static const SparklePos SPARKLES[] = {
+    {  0, -19, 2 }, { 13, -14, 1 }, { 19,  0, 2 },
+    { 13,  14, 1 }, {  0,  19, 2 }, {-13,  14, 1 },
+    {-19,   0, 2 }, {-13, -14, 1 }, {  7, -22, 1 },
+    { 22,  -7, 1 }, {-22,   7, 1 }, { -7,  22, 1 },
+};
+
+// phase 0-11: each sparkle blinks offset from the others
+static void draw_star_eye(int cx, int cy, uint8_t phase) {
+    draw_star_shape(cx, cy, 14, 6);
+    for (int i = 0; i < 12; i++) {
+        if (((i + phase) % 4) < 2) {   // on 2 frames, off 2 frames
+            int sx = cx + SPARKLES[i].dx;
+            int sy = cy + SPARKLES[i].dy;
+            if (sx > 1 && sx < 126 && sy > 1 && sy < 62)
+                draw_sparkle(sx, sy, SPARKLES[i].r);
+        }
+    }
+}
+
+void show_star() {
+    display.clearDisplay();
+    draw_star_eye(34, 34, 0);
+    draw_star_eye(94, 34, 3);   // offset phase so eyes twinkle independently
+    display.display();
+}
+
+// Animated burst: sparkles cycle outward for ~1 second
+void show_star_burst() {
+    for (uint8_t frame = 0; frame < 8; frame++) {
+        display.clearDisplay();
+        draw_star_eye(34, 34, frame);
+        draw_star_eye(94, 34, frame + 3);
+        display.display();
+        delay(120);
+    }
+}
+
+// ================================================================
+//  HEART EYES
+// ================================================================
+
+// r = overall size (half-height of heart)
+static void draw_heart(int cx, int cy, int r) {
+    int bump_r = r * 6 / 12;          // radius of the two top bumps
+    int offset = r * 5 / 12;          // horizontal offset of each bump from center
+    int drop   = r * 3 / 12;          // bump centers sit this far above cy
+
+    int bump_y  = cy - drop;
+    int tri_bot = cy + r - drop;
+
+    // two circles for the top lobes
+    display.fillCircle(cx - offset, bump_y, bump_r, SH110X_WHITE);
+    display.fillCircle(cx + offset, bump_y, bump_r, SH110X_WHITE);
+
+    // filled triangle bridging down to the bottom point
+    display.fillTriangle(
+        cx - offset - bump_r, bump_y,
+        cx + offset + bump_r, bump_y,
+        cx,                   tri_bot,
+        SH110X_WHITE
+    );
+
+    // glint — small dark hollow in upper-left lobe
+    if (bump_r >= 4)
+        display.fillCircle(cx - offset + 1, bump_y - bump_r / 2, bump_r / 3, SH110X_BLACK);
+}
+
+void show_hearts() {
+    display.clearDisplay();
+    draw_heart(34, 34, 11);
+    draw_heart(94, 34, 11);
+    display.display();
+}
+
+// Lub-dub heartbeat pulsation — runs one full beat cycle (~1.1 s)
+void show_hearts_pulse() {
+    // {size, hold_ms}  — lub: quick expand; dub: second softer beat; rest: contract
+    static const struct { int8_t r; uint16_t ms; } BEAT[] = {
+        {  9, 60  },   // resting
+        { 13, 80  },   // lub  — first beat, bigger
+        {  9, 60  },   // release
+        { 11, 70  },   // dub  — second beat, softer
+        {  8, 80  },   // release
+        {  8, 300 },   // rest before next cycle
+    };
+    for (int i = 0; i < 6; i++) {
+        display.clearDisplay();
+        draw_heart(34, 34, BEAT[i].r);
+        draw_heart(94, 34, BEAT[i].r);
+        display.display();
+        delay(BEAT[i].ms);
+    }
+}
+
+// ================================================================
 //  BREATHING
 // ================================================================
 void breathing() {
@@ -156,23 +289,11 @@ void show_sad_then() {
 }
 
 // ================================================================
-//  SETUP
+//  INIT (call from main setup())
 // ================================================================
-void setup() {
-    Serial.begin(9600);
+void initEyes() {
     delay(250);
     display.begin(i2c_Address, true);
     display.clearDisplay();
     display.display();
 }
-
-// ================================================================
-//  LOOP
-// ================================================================
-// void loop() {
-//   if (is_slouching)  
-//   {
-//     show_sad();
-//   }
-//   breathing();
-// }

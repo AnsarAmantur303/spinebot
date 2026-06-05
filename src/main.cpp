@@ -185,5 +185,5 @@ void loop() {
     // }
     // else
     // breathing();
-    show_sad_then();
+    show_hearts_pulse();
 }
