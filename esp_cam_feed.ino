@@ -192,9 +192,10 @@ bool initCamera() {
   return true;
 }
 
-// ── MJPEG stream task (runs on Core 1) ────────
+// ── MJPEG stream task ──────────────────────────
 void streamTask(void* arg) {
-  WiFiClient client = server.client();
+  WiFiClient client = *((WiFiClient*)arg);  // take ownership of the client
+  delete (WiFiClient*)arg;                  // free the heap copy
 
   client.println("HTTP/1.1 200 OK");
   client.println("Content-Type: multipart/x-mixed-replace; boundary=frame");
@@ -204,7 +205,6 @@ void streamTask(void* arg) {
   while (client.connected()) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) {
-      Serial.println("[CAM] Capture failed");
       vTaskDelay(10);
       continue;
     }
@@ -216,8 +216,7 @@ void streamTask(void* arg) {
     client.println();
 
     esp_camera_fb_return(fb);
-
-    vTaskDelay(1);  // yield to WiFi stack — prevents starving the radio driver
+    vTaskDelay(1);
 
     if (!client.connected()) break;
   }
@@ -228,9 +227,9 @@ void streamTask(void* arg) {
 
 // ── MJPEG stream handler ───────────────────────
 void handleStream() {
-  xTaskCreatePinnedToCore(streamTask, "stream", 8192, NULL, 5, NULL, 1);
+  WiFiClient* client = new WiFiClient(server.client());  // heap-allocate a stable copy
+  xTaskCreatePinnedToCore(streamTask, "stream", 8192, (void*)client, 5, NULL, 1);
 }
-
 // ── Single capture handler ─────────────────────
 void handleCapture() {
   camera_fb_t* fb = esp_camera_fb_get();
