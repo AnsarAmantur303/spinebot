@@ -28,6 +28,12 @@
 #include <ArduinoJson.h>
 #include <ESP32Servo.h>
 
+void searching();
+void setSlouching(bool slouching);
+void setPersonPresent(bool present);
+void setWaving(bool waving);
+void setWaveStyle(int style);
+
 // ─── WIFI ────────────────────────────────────────────────────────────────────
 
 const char* WIFI_SSID     = "rinat";
@@ -74,6 +80,9 @@ void oledTask(void* parameter) {
                 break;
             case 4:
                 show_hearts_pulse();
+                break;
+            case 5:
+                searching();
                 break;
             default:
                 show_happy();
@@ -122,6 +131,8 @@ const int SERVO1_PIN = 14;   // shoulder — CW on slouch LEFT
 const int SERVO2_PIN = 15;   // shoulder — CCW on slouch RIGHT
 const int SERVO3_PIN = 12;   // arm left
 const int SERVO4_PIN = 13;   // arm right
+const int TOUCH_LEFT_PIN = 16;
+const int TOUCH_RIGHT_PIN = 17;
 // const int BUZZER_PIN = 39;   // active buzzer — beep on 20-min timer
 
 // ─── TIMING ──────────────────────────────────────────────────────────────────
@@ -144,14 +155,24 @@ const int ARM_WAVE_DEFLECTION_DEG = 35;
 const int ARM_WAVE_STEP_MS = 180;
 const unsigned long ARM_WAVE_STYLE2_STEP_MS = 260;
 const unsigned long ARM_WAVE_STYLE2_RESET_MS = 60;
+const unsigned long TOUCH_PAIR_MIN_MS = 200UL;
+const unsigned long TOUCH_PAIR_MAX_MS = 300UL;
+const unsigned long WAVE_DURATION_MS   = 2000UL;
 
 // ─── GLOBALS ─────────────────────────────────────────────────────────────────
 
 Servo servo1, servo2, servo3, servo4;
 
 volatile bool is_slouching    = false;
+volatile bool is_person_present = false;
 volatile bool is_waving       = false;
 volatile int wave_style       = 0; // 0: wave one hand, 1: wave both hands
+volatile bool touched_L       = false;
+volatile bool touched_R       = false;
+volatile bool touch_debug_override = false;
+volatile unsigned long touched_L_ms = 0;
+volatile unsigned long touched_R_ms = 0;
+volatile unsigned long wave_active_until_ms = 0;
 unsigned long lastSlouchAlert = 0;
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -178,6 +199,10 @@ void writeBackServos(bool slouching) {
         servo1.write(BACK_SERVO1_UPRIGHT);
         servo2.write(BACK_SERVO2_UPRIGHT);
     }
+}
+
+void writeBackNeutral() {
+    writeBackServos(false);
 }
 
 int mirrorAngle(int angleDeg) {
@@ -225,6 +250,60 @@ void doWaveStyleBothHands(int phaseDeg) {
 
 void writeMirroredArms(int leftDeg) {
     writeArmAngles(leftDeg, leftDeg);
+}
+
+void searching() {
+    show_closing();
+}
+
+void touchTask(void* parameter) {
+    (void)parameter;
+
+    bool lastRawL = false;
+    bool lastRawR = false;
+
+    for (;;) {
+        if (!touch_debug_override) {
+            bool currentL = digitalRead(TOUCH_LEFT_PIN) == HIGH;
+            bool currentR = digitalRead(TOUCH_RIGHT_PIN) == HIGH;
+            unsigned long nowMs = millis();
+
+            if (currentL && !lastRawL) {
+                touched_L_ms = nowMs;
+            }
+            if (currentR && !lastRawR) {
+                touched_R_ms = nowMs;
+            }
+
+            touched_L = currentL;
+            touched_R = currentR;
+            lastRawL = currentL;
+            lastRawR = currentR;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
+void setTouchDebugState(bool overrideActive, bool leftTouched, bool rightTouched) {
+    unsigned long nowMs = millis();
+
+    if (overrideActive && leftTouched && !touched_L) {
+        touched_L_ms = nowMs;
+    }
+    if (overrideActive && rightTouched && !touched_R) {
+        touched_R_ms = nowMs;
+    }
+
+    touch_debug_override = overrideActive;
+    touched_L = leftTouched;
+    touched_R = rightTouched;
+}
+
+void startWave(int style, int animationState) {
+    setWaveStyle(style);
+    setWaving(true);
+    animState = is_slouching ? 2 : animationState;
+    wave_active_until_ms = millis() + WAVE_DURATION_MS;
 }
 
 void servoTask(void* parameter) {
@@ -360,6 +439,9 @@ void setup() {
     // pinMode(BUZZER_PIN, OUTPUT);
     // digitalWrite(BUZZER_PIN, LOW);
 
+    pinMode(TOUCH_LEFT_PIN, INPUT_PULLDOWN);
+    pinMode(TOUCH_RIGHT_PIN, INPUT_PULLDOWN);
+
     // Allocate LEDC timers for servos — avoid timer 0 used by camera XCLK
     ESP32PWM::allocateTimer(1);
     ESP32PWM::allocateTimer(2);
@@ -375,40 +457,203 @@ void setup() {
         nullptr,
         1
     );
+    xTaskCreatePinnedToCore(
+        touchTask,
+        "touchTask",
+        2048,
+        nullptr,
+        1,
+        nullptr,
+        1
+    );
     initOledTask();
     Serial.println("[setup] Ready.");
 }
 
 // ─── LOOP ────────────────────────────────────────────────────────────────────
 
+void triggerOneHandWave() {
+    startWave(0, 1);
+}
+
+void triggerBothHandsWave() {
+    startWave(1, 3);
+}
+
+void printDebugHelp() {
+    Serial.println("[debug] commands:");
+    Serial.println("[debug]   p = toggle person present");
+    Serial.println("[debug]   s = toggle slouching");
+    Serial.println("[debug]   w = toggle waving");
+    Serial.println("[debug]   0..3 = set wave style");
+    Serial.println("[debug]   l = left touch on");
+    Serial.println("[debug]   L = left touch off");
+    Serial.println("[debug]   r = right touch on");
+    Serial.println("[debug]   R = right touch off");
+    Serial.println("[debug]   b = both touches on");
+    Serial.println("[debug]   n = both touches off");
+    Serial.println("[debug]   u = disable touch override");
+}
+
+void handleDebugSerialInput() {
+    while (Serial.available() > 0) {
+        char command = static_cast<char>(Serial.read());
+
+        if (command == '\n' || command == '\r' || command == ' ') {
+            continue;
+        }
+
+        switch (command) {
+            case 'h':
+            case '?':
+                printDebugHelp();
+                break;
+
+            case 'p':
+                setPersonPresent(!is_person_present);
+                Serial.printf("[debug] is_person_present=%d\n", is_person_present);
+                break;
+
+            case 's':
+                setSlouching(!is_slouching);
+                Serial.printf("[debug] is_slouching=%d\n", is_slouching);
+                break;
+
+            case 'w':
+                setWaving(!is_waving);
+                Serial.printf("[debug] is_waving=%d\n", is_waving);
+                break;
+
+            case '0':
+            case '1':
+            case '2':
+            case '3':
+                setWaveStyle(command - '0');
+                Serial.printf("[debug] wave_style=%d\n", wave_style);
+                break;
+
+            case 'l':
+                setTouchDebugState(true, true, false);
+                Serial.printf("[debug] touched_L=%d touched_R=%d\n", touched_L, touched_R);
+                break;
+
+            case 'L':
+                setTouchDebugState(true, false, touched_R);
+                Serial.printf("[debug] touched_L=%d touched_R=%d\n", touched_L, touched_R);
+                break;
+
+            case 'r':
+                setTouchDebugState(true, false, true);
+                Serial.printf("[debug] touched_L=%d touched_R=%d\n", touched_L, touched_R);
+                break;
+
+            case 'R':
+                setTouchDebugState(true, touched_L, false);
+                Serial.printf("[debug] touched_L=%d touched_R=%d\n", touched_L, touched_R);
+                break;
+
+            case 'b':
+                setTouchDebugState(true, true, true);
+                Serial.printf("[debug] touched_L=%d touched_R=%d\n", touched_L, touched_R);
+                break;
+
+            case 'n':
+                setTouchDebugState(true, false, false);
+                Serial.printf("[debug] touched_L=%d touched_R=%d\n", touched_L, touched_R);
+                break;
+
+            case 'u':
+                touch_debug_override = false;
+                Serial.println("[debug] touch override disabled");
+                break;
+
+            default:
+                Serial.printf("[debug] unknown command '%c'\n", command);
+                printDebugHelp();
+                break;
+        }
+    }
+}
+
 void loop() {
-    unsigned long now = millis();
+    handleDebugSerialInput();
 
-    // if (WiFi.status() != WL_CONNECTED) {
-    //     Serial.println("[wifi] Lost — reconnecting...");
-    //     connectWiFi();
-    //     return;
-    // }
+    static bool lastPersonPresent = false;
+    static bool lastTouchL = false;
+    static bool lastTouchR = false;
+    static bool pairedTouchConsumed = false;
 
-    //  if (is_slouching && (now - lastSlouchAlert >= SLOUCH_COOLDOWN_MS)) {
-    //     lastSlouchAlert = now;
-    //     Serial.println("[slouch] Detected — pulsing shoulder servos");
-    //     show_sad_then();
-    //     slouchBack();
-    // }
-    // else
-    // breathing();
-    delay(2000);
-    animState++;
-    is_slouching = !is_slouching;
-    is_waving = true;
-    wave_style++;
-    if(wave_style > 2) wave_style = 3;
-    if(animState > 4) animState = 1;
+    unsigned long nowMs = millis();
+
+    bool personPresent = is_person_present;
+    bool touchL = touched_L;
+    bool touchR = touched_R;
+    bool leftTouchedEdge = touchL && !lastTouchL;
+    bool rightTouchedEdge = touchR && !lastTouchR;
+
+    bool touchPairActive = false;
+    if (touchL && touchR) {
+        unsigned long deltaMs = (touched_L_ms > touched_R_ms) ? (touched_L_ms - touched_R_ms) : (touched_R_ms - touched_L_ms);
+        touchPairActive = deltaMs >= TOUCH_PAIR_MIN_MS && deltaMs <= TOUCH_PAIR_MAX_MS;
+    }
+
+    if (!touchL || !touchR) {
+        pairedTouchConsumed = false;
+    }
+
+    if (is_waving && wave_active_until_ms != 0 && nowMs >= wave_active_until_ms) {
+        setWaving(false);
+        wave_active_until_ms = 0;
+    }
+
+    if (personPresent) {
+        if (is_slouching) {
+            writeBackServos(true);
+            animState = 2;
+        } else {
+            writeBackServos(false);
+            animState = 1;
+        }
+
+        if (!lastPersonPresent) {
+            Serial.println("[presence] person entered — happy + one-hand wave");
+            triggerOneHandWave();
+        }
+
+        if (touchPairActive && !pairedTouchConsumed) {
+            Serial.println("[touch] paired touches — star burst + both hands");
+            triggerBothHandsWave();
+            pairedTouchConsumed = true;
+        } else if (leftTouchedEdge || rightTouchedEdge) {
+            Serial.println("[touch] one sensor touched — happy + one-hand wave");
+            triggerOneHandWave();
+        } else if (!lastPersonPresent) {
+            triggerOneHandWave();
+        }
+    } else {
+        if (lastPersonPresent) {
+            Serial.println("[presence] person left — neutral back + searching");
+        }
+        writeBackNeutral();
+        setWaving(false);
+        setWaveStyle(0);
+        animState = 5;
+        wave_active_until_ms = 0;
+    }
+
+    lastPersonPresent = personPresent;
+    lastTouchL = touchL;
+    lastTouchR = touchR;
+
+    vTaskDelay(pdMS_TO_TICKS(20));
 }
 
 void setSlouching(bool slouching) {
     is_slouching = slouching;
+}
+
+void setPersonPresent(bool present) {
+    is_person_present = present;
 }
 
 void setWaving(bool waving) {
