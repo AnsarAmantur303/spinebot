@@ -10,6 +10,26 @@
 
 Adafruit_SH1106G display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
+extern volatile int animState;
+
+static bool animationStateChanged(int expectedState) {
+    return animState != expectedState;
+}
+
+static bool delayInterruptible(uint16_t totalMs, int expectedState, uint16_t sliceMs = 10) {
+    unsigned long start = millis();
+    while ((millis() - start) < totalMs) {
+        if (animationStateChanged(expectedState)) {
+            return true;
+        }
+
+        unsigned long elapsed = millis() - start;
+        unsigned long remaining = totalMs - elapsed;
+        delay((remaining < sliceMs) ? remaining : sliceMs);
+    }
+    return animationStateChanged(expectedState);
+}
+
 // ================================================================
 //  BASE EYE
 // ================================================================
@@ -129,20 +149,38 @@ void show_sad() {
 //  SHOW CLOSING
 // ================================================================
 void show_closing() {
+    const int expectedState = animState;
+
     for (int i = 0; i <= 32; i += 4) {
+        if (animationStateChanged(expectedState)) {
+            return;
+        }
+
         display.clearDisplay();
         draw_closing(34, 34, i);
         draw_closing(94, 34, i);
         display.display();
-        delay(60);
+        if (delayInterruptible(60, expectedState)) {
+            return;
+        }
     }
-    delay(300);
+
+    if (delayInterruptible(300, expectedState)) {
+        return;
+    }
+
     for (int i = 32; i >= 0; i -= 4) {
+        if (animationStateChanged(expectedState)) {
+            return;
+        }
+
         display.clearDisplay();
         draw_closing(34, 34, i);
         draw_closing(94, 34, i);
         display.display();
-        delay(60);
+        if (delayInterruptible(60, expectedState)) {
+            return;
+        }
     }
 }
 
@@ -207,12 +245,21 @@ void show_star() {
 
 // Animated burst: sparkles cycle outward for ~1 second
 void show_star_burst() {
+    const int expectedState = animState;
+
     for (uint8_t frame = 0; frame < 8; frame++) {
+        if (animationStateChanged(expectedState)) {
+            return;
+        }
+
         display.clearDisplay();
         draw_star_eye(34, 34, frame);
         draw_star_eye(94, 34, frame + 3);
         display.display();
-        delay(120);
+
+        if (delayInterruptible(120, expectedState)) {
+            return;
+        }
     }
 }
 
@@ -255,6 +302,8 @@ void show_hearts() {
 
 // Lub-dub heartbeat pulsation — runs one full beat cycle (~1.1 s)
 void show_hearts_pulse() {
+    const int expectedState = animState;
+
     // {size, hold_ms}  — lub: quick expand; dub: second softer beat; rest: contract
     static const struct { int8_t r; uint16_t ms; } BEAT[] = {
         {  9, 60  },   // resting
@@ -265,11 +314,18 @@ void show_hearts_pulse() {
         {  8, 300 },   // rest before next cycle
     };
     for (int i = 0; i < 6; i++) {
+        if (animationStateChanged(expectedState)) {
+            return;
+        }
+
         display.clearDisplay();
         draw_heart(34, 34, BEAT[i].r);
         draw_heart(94, 34, BEAT[i].r);
         display.display();
-        delay(BEAT[i].ms);
+
+        if (delayInterruptible(BEAT[i].ms, expectedState)) {
+            return;
+        }
     }
 }
 
@@ -277,14 +333,34 @@ void show_hearts_pulse() {
 //  BREATHING
 // ================================================================
 void breathing() {
+    const int expectedState = animState;
+
+    if (animationStateChanged(expectedState)) {
+        return;
+    }
+
     show_happy();
-    delay(1000);
+
+    if (delayInterruptible(1000, expectedState)) {
+        return;
+    }
+
     show_closing();
 }
 
 void show_sad_then() {
+    const int expectedState = animState;
+
+    if (animationStateChanged(expectedState)) {
+        return;
+    }
+
     show_sad();
-    delay(1000);
+
+    if (delayInterruptible(1000, expectedState)) {
+        return;
+    }
+
     show_closing();
 }
 
@@ -297,3 +373,14 @@ void initEyes() {
     display.clearDisplay();
     display.display();
 }
+
+// ================================================================
+//  LOOP
+// ================================================================
+// void loop() {
+//   if (is_slouching)  
+//   {
+//     show_sad();
+//   }
+//   breathing();
+// }

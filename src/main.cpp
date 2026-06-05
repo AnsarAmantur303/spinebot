@@ -36,9 +36,67 @@ const char* WIFI_PASSWORD = "12345678";
 // ─── SERVER ──────────────────────────────────────────────────────────────────
 
 const char*    SERVER_HOST = "192.168.1.100";   // ← your PC's local IP
+
+volatile int animState = 1;
 const uint16_t SERVER_PORT = 5000;
 
 // // ─── CAMERA PINS — ESP32-S3 / OV5640 ────────────────────────────────────────
+
+void function_1() {
+    show_happy();
+}
+
+void function_2() {
+    show_sad();
+}
+
+void function_3() {
+    show_closing();
+}
+
+void function_4() {
+    breathing();
+}
+
+void oledTask(void* parameter) {
+    (void)parameter;
+
+    for (;;) {
+        switch (animState) {
+            case 1:
+                show_happy();
+                break;
+            case 2:
+                show_sad();
+                break;
+            case 3:
+                show_star_burst();
+                break;
+            case 4:
+                show_hearts_pulse();
+                break;
+            default:
+                show_happy();
+                break;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(60));
+    }
+}
+
+void initOledTask() {
+    initEyes();
+
+    xTaskCreatePinnedToCore(
+        oledTask,
+        "oledTask",
+        4096,
+        nullptr,
+        1,
+        nullptr,
+        1
+    );
+}
 
 // #define PWDN_GPIO    -1
 // #define RESET_GPIO   -1
@@ -161,8 +219,7 @@ void setup() {
     ESP32PWM::allocateTimer(3);
 
 // TODO:    connectWiFi();
-    // initialize eyes display
-    initEyes();
+    initOledTask();
     Serial.println("[setup] Ready.");
 }
 
@@ -185,5 +242,7 @@ void loop() {
     // }
     // else
     // breathing();
-    show_hearts_pulse();
+    delay(2000);
+    animState++;
+    if(animState > 4) animState = 1;
 }
