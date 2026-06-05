@@ -137,13 +137,13 @@ const int BACK_SERVO2_UPRIGHT = 180 - UPRIGHT_ANGLE; // mirror of servo 1
 const int BACK_SERVO2_SLOUCH  = 180 - (UPRIGHT_ANGLE - DEFLECT_ANGLE); // mirror of servo 1
 
 // arm wave geometry
-const int ARM_CENTER_DEG = 90;
-const int ARM_MIN_DEG = ARM_CENTER_DEG - 35;
-const int ARM_MAX_DEG = ARM_CENTER_DEG + 35;
-const int ARM_WAVE_AMPLITUDE_DEG = 35;
+const int ARM_NEUTRAL_DEG = 90;
+const int ARM_LEFT_BASE_DEG = 10;
+const int ARM_RIGHT_BASE_DEG = 170;
+const int ARM_WAVE_DEFLECTION_DEG = 35;
 const int ARM_WAVE_STEP_MS = 180;
-const unsigned long ARM_WAVE_STYLE2_STEP_MS = 26;
-const unsigned long ARM_WAVE_STYLE2_RESET_MS = 6;
+const unsigned long ARM_WAVE_STYLE2_STEP_MS = 260;
+const unsigned long ARM_WAVE_STYLE2_RESET_MS = 60;
 
 // ─── GLOBALS ─────────────────────────────────────────────────────────────────
 
@@ -184,30 +184,47 @@ int mirrorAngle(int angleDeg) {
     return 180 - angleDeg;
 }
 
+int armMotionAngle(int baseDeg, int deflectionDeg) {
+    return constrain(baseDeg + deflectionDeg, 0, 180);
+}
+
+int armLeftAngleForDeflection(int deflectionDeg) {
+    return armMotionAngle(ARM_LEFT_BASE_DEG, deflectionDeg);
+}
+
+int armRightAngleForDeflection(int deflectionDeg) {
+    return armMotionAngle(ARM_RIGHT_BASE_DEG, deflectionDeg);
+}
+
+void writeArmAngles(int leftDeg, int rightDeg) {
+    servo3.write(leftDeg);
+    servo4.write(rightDeg);
+}
+
+void writeArmDeflection(int deflectionDeg) {
+    writeArmAngles(
+        armLeftAngleForDeflection(deflectionDeg),
+        armRightAngleForDeflection(deflectionDeg)
+    );
+}
+
 void writeArmNeutral() {
-    servo3.write(ARM_CENTER_DEG);
-    servo4.write(ARM_CENTER_DEG);
+    servo3.write(ARM_NEUTRAL_DEG);
+    servo4.write(ARM_NEUTRAL_DEG);
 }
 
 void doWaveStyleOneHand(int phaseDeg) {
-    // Style 0: left arm waves, right arm stays on the opposite side.
-    int left = ARM_CENTER_DEG + phaseDeg;
-    int right = mirrorAngle(ARM_CENTER_DEG);
-    servo3.write(left);
-    servo4.write(right);
+    // Style 0: left arm waves, right arm stays at its base pose.
+    writeArmAngles(armLeftAngleForDeflection(phaseDeg), ARM_RIGHT_BASE_DEG);
 }
 
 void doWaveStyleBothHands(int phaseDeg) {
-    // Style 1: both arms move in perfectly mirrored opposition.
-    int left = ARM_CENTER_DEG + phaseDeg;
-    int right = mirrorAngle(left);
-    servo3.write(left);
-    servo4.write(right);
+    // Style 1: both arms move together in the same direction.
+    writeArmDeflection(phaseDeg);
 }
 
 void writeMirroredArms(int leftDeg) {
-    servo3.write(leftDeg);
-    servo4.write(mirrorAngle(leftDeg));
+    writeArmAngles(leftDeg, leftDeg);
 }
 
 void servoTask(void* parameter) {
@@ -224,10 +241,10 @@ void servoTask(void* parameter) {
     writeBackServos(lastPosture);
     writeArmNeutral();
 
-    int wavePhaseDeg = ARM_WAVE_AMPLITUDE_DEG;
-    int waveStepDeg = -ARM_WAVE_AMPLITUDE_DEG;
+    int wavePhaseDeg = ARM_WAVE_DEFLECTION_DEG;
+    int waveStepDeg = -ARM_WAVE_DEFLECTION_DEG;
     unsigned long lastWaveStepMs = millis();
-    int style2Angle = ARM_MIN_DEG;
+    int style2Deflection = 0;
     bool style2ResetPending = false;
     unsigned long style2ResetMs = 0;
 
@@ -252,10 +269,10 @@ void servoTask(void* parameter) {
 
         if (!lastWavingState) {
             Serial.printf("[servo] waving -> ON (style %d)\n", wave_style);
-            wavePhaseDeg = ARM_WAVE_AMPLITUDE_DEG;
-            waveStepDeg = -ARM_WAVE_AMPLITUDE_DEG;
+            wavePhaseDeg = ARM_WAVE_DEFLECTION_DEG;
+            waveStepDeg = -ARM_WAVE_DEFLECTION_DEG;
             lastWaveStepMs = millis();
-            style2Angle = ARM_MIN_DEG;
+            style2Deflection = 0;
             style2ResetPending = false;
             style2ResetMs = 0;
         }
@@ -263,10 +280,10 @@ void servoTask(void* parameter) {
         if (wave_style != lastWaveStyle) {
             lastWaveStyle = wave_style;
             if (wave_style == 2) {
-                style2Angle = ARM_MIN_DEG;
+                style2Deflection = 0;
                 style2ResetPending = false;
                 style2ResetMs = 0;
-                writeMirroredArms(style2Angle);
+                writeArmDeflection(style2Deflection);
             } else if (wave_style == 3) {
                 writeArmNeutral();
             }
@@ -279,7 +296,7 @@ void servoTask(void* parameter) {
                     doWaveStyleOneHand(wavePhaseDeg);
 
                     wavePhaseDeg += waveStepDeg;
-                    if (wavePhaseDeg >= ARM_WAVE_AMPLITUDE_DEG || wavePhaseDeg <= -ARM_WAVE_AMPLITUDE_DEG) {
+                    if (wavePhaseDeg >= ARM_WAVE_DEFLECTION_DEG || wavePhaseDeg <= -ARM_WAVE_DEFLECTION_DEG) {
                         waveStepDeg = -waveStepDeg;
                     }
                     lastWaveStepMs = nowMs;
@@ -291,7 +308,7 @@ void servoTask(void* parameter) {
                     doWaveStyleBothHands(wavePhaseDeg);
 
                     wavePhaseDeg += waveStepDeg;
-                    if (wavePhaseDeg >= ARM_WAVE_AMPLITUDE_DEG || wavePhaseDeg <= -ARM_WAVE_AMPLITUDE_DEG) {
+                    if (wavePhaseDeg >= ARM_WAVE_DEFLECTION_DEG || wavePhaseDeg <= -ARM_WAVE_DEFLECTION_DEG) {
                         waveStepDeg = -waveStepDeg;
                     }
                     lastWaveStepMs = nowMs;
@@ -301,18 +318,18 @@ void servoTask(void* parameter) {
             case 2:
                 if (!style2ResetPending) {
                     if (nowMs - lastWaveStepMs >= ARM_WAVE_STYLE2_STEP_MS) {
-                        writeMirroredArms(style2Angle);
-                        style2Angle += 2;
-                        if (style2Angle >= ARM_MAX_DEG) {
-                            style2Angle = ARM_MAX_DEG;
+                        writeArmDeflection(style2Deflection);
+                        style2Deflection += 2;
+                        if (style2Deflection >= ARM_WAVE_DEFLECTION_DEG) {
+                            style2Deflection = ARM_WAVE_DEFLECTION_DEG;
                             style2ResetPending = true;
                             style2ResetMs = nowMs;
                         }
                         lastWaveStepMs = nowMs;
                     }
                 } else if (nowMs - style2ResetMs >= ARM_WAVE_STYLE2_RESET_MS) {
-                    style2Angle = ARM_MIN_DEG;
-                    writeMirroredArms(style2Angle);
+                    style2Deflection = 0;
+                    writeArmDeflection(style2Deflection);
                     style2ResetPending = false;
                     lastWaveStepMs = nowMs;
                 }
@@ -386,7 +403,7 @@ void loop() {
     is_slouching = !is_slouching;
     is_waving = true;
     wave_style++;
-    if(wave_style > 2) wave_style = 2;
+    if(wave_style > 2) wave_style = 3;
     if(animState > 4) animState = 1;
 }
 
