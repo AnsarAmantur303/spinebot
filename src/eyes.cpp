@@ -169,11 +169,10 @@ void setup() {
 // ================================================================
 //  LOOP
 // ================================================================
-void loop() {
-  if (is_slouching)  
-  {
-    show_sad();
-    is_slouching = false;
-  }
-  breathing();
-}
+// void loop() {
+//   if (is_slouching)  
+//   {
+//     show_sad();
+//   }
+//   breathing();
+// }
