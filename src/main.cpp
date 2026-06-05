@@ -118,34 +118,40 @@ void initOledTask() {
 // ─── SERVO / BUZZER PINS ─────────────────────────────────────────────────────
 // Camera occupies GPIOs 4-18, so use 19+ for peripherals
 
-const int SERVO1_PIN = 14;   // shoulder — CW on slouch
-const int SERVO2_PIN = 15;   // shoulder — CCW on slouch
-const int SERVO3_PIN = 12;   // hand left  — wave on 15-min timer
-const int SERVO4_PIN = 13;   // hand right — wave on 15-min timer
+const int SERVO1_PIN = 14;   // shoulder — CW on slouch LEFT
+const int SERVO2_PIN = 15;   // shoulder — CCW on slouch RIGHT
+const int SERVO3_PIN = 12;   // arm left
+const int SERVO4_PIN = 13;   // arm right
 // const int BUZZER_PIN = 39;   // active buzzer — beep on 20-min timer
 
 // ─── TIMING ──────────────────────────────────────────────────────────────────
 
 const unsigned long SLOUCH_COOLDOWN_MS  = 10000UL;       // min gap between slouch alerts
 
-const int           HAND_WAVE_REPS      = 5;             // up/down cycles
-const int           HAND_WAVE_SPEED_MS  = 300;           // ms per half-cycle
-
 // back servo geometry
-const int BACK_SERVO1_UPRIGHT = 135;
-const int BACK_SERVO1_SLOUCH  = 100;
-const int BACK_SERVO2_UPRIGHT = 135;
-const int BACK_SERVO2_SLOUCH  = 170; 
+const int UPRIGHT_ANGLE = 135; // angle for upright posture
+const int DEFLECT_ANGLE = 35;  // symmetric bend amount from upright
+const int BACK_SERVO1_UPRIGHT = UPRIGHT_ANGLE;
+const int BACK_SERVO1_SLOUCH  = UPRIGHT_ANGLE - DEFLECT_ANGLE;
+const int BACK_SERVO2_UPRIGHT = 180 - UPRIGHT_ANGLE; // mirror of servo 1
+const int BACK_SERVO2_SLOUCH  = 180 - (UPRIGHT_ANGLE - DEFLECT_ANGLE); // mirror of servo 1
 
-// Hand servo geometry
-const int HAND_DOWN_DEG = 0;
-const int HAND_UP_DEG   = 90;
+// arm wave geometry
+const int ARM_CENTER_DEG = 90;
+const int ARM_MIN_DEG = ARM_CENTER_DEG - 35;
+const int ARM_MAX_DEG = ARM_CENTER_DEG + 35;
+const int ARM_WAVE_AMPLITUDE_DEG = 35;
+const int ARM_WAVE_STEP_MS = 180;
+const unsigned long ARM_WAVE_STYLE2_STEP_MS = 26;
+const unsigned long ARM_WAVE_STYLE2_RESET_MS = 6;
 
 // ─── GLOBALS ─────────────────────────────────────────────────────────────────
 
 Servo servo1, servo2, servo3, servo4;
 
-bool          is_slouching    = true;
+volatile bool is_slouching    = false;
+volatile bool is_waving       = false;
+volatile int wave_style       = 0; // 0: wave one hand, 1: wave both hands
 unsigned long lastSlouchAlert = 0;
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -163,43 +169,167 @@ unsigned long lastSlouchAlert = 0;
 // }
 
 
-void straightenBack() {
-    servo1.attach(SERVO1_PIN);
-    servo2.attach(SERVO2_PIN);
-
-    servo1.write(BACK_SERVO1_UPRIGHT);
-    servo2.write(BACK_SERVO2_UPRIGHT);
-}
-void slouchBack() {
-    servo1.attach(SERVO1_PIN);
-    servo2.attach(SERVO2_PIN);
-
-    servo1.write(BACK_SERVO1_SLOUCH);
-    servo2.write(BACK_SERVO2_SLOUCH);
+void writeBackServos(bool slouching) {
+    // Mirror movement: one servo moves to its slouch angle while the other mirrors it.
+    if (slouching) {
+        servo1.write(BACK_SERVO1_SLOUCH);
+        servo2.write(BACK_SERVO2_SLOUCH);
+    } else {
+        servo1.write(BACK_SERVO1_UPRIGHT);
+        servo2.write(BACK_SERVO2_UPRIGHT);
+    }
 }
 
-void waveHands() {
-    Serial.println("[hands] 15 min sitting — waving hands!");
+int mirrorAngle(int angleDeg) {
+    return 180 - angleDeg;
+}
 
+void writeArmNeutral() {
+    servo3.write(ARM_CENTER_DEG);
+    servo4.write(ARM_CENTER_DEG);
+}
+
+void doWaveStyleOneHand(int phaseDeg) {
+    // Style 0: left arm waves, right arm stays on the opposite side.
+    int left = ARM_CENTER_DEG + phaseDeg;
+    int right = mirrorAngle(ARM_CENTER_DEG);
+    servo3.write(left);
+    servo4.write(right);
+}
+
+void doWaveStyleBothHands(int phaseDeg) {
+    // Style 1: both arms move in perfectly mirrored opposition.
+    int left = ARM_CENTER_DEG + phaseDeg;
+    int right = mirrorAngle(left);
+    servo3.write(left);
+    servo4.write(right);
+}
+
+void writeMirroredArms(int leftDeg) {
+    servo3.write(leftDeg);
+    servo4.write(mirrorAngle(leftDeg));
+}
+
+void servoTask(void* parameter) {
+    (void)parameter;
+
+    servo1.attach(SERVO1_PIN);
+    servo2.attach(SERVO2_PIN);
     servo3.attach(SERVO3_PIN);
     servo4.attach(SERVO4_PIN);
 
-    servo3.write(HAND_DOWN_DEG);
-    servo4.write(HAND_DOWN_DEG);
-    delay(300);
+    bool lastPosture = is_slouching;
+    bool lastWavingState = is_waving;
+    int lastWaveStyle = -1;
+    writeBackServos(lastPosture);
+    writeArmNeutral();
 
-    for (int i = 0; i < HAND_WAVE_REPS; i++) {
-        servo3.write(HAND_UP_DEG);
-        servo4.write(HAND_UP_DEG);
-        delay(HAND_WAVE_SPEED_MS);
+    int wavePhaseDeg = ARM_WAVE_AMPLITUDE_DEG;
+    int waveStepDeg = -ARM_WAVE_AMPLITUDE_DEG;
+    unsigned long lastWaveStepMs = millis();
+    int style2Angle = ARM_MIN_DEG;
+    bool style2ResetPending = false;
+    unsigned long style2ResetMs = 0;
 
-        servo3.write(HAND_DOWN_DEG);
-        servo4.write(HAND_DOWN_DEG);
-        delay(HAND_WAVE_SPEED_MS);
+    for (;;) {
+        bool currentPosture = is_slouching;
+        if (currentPosture != lastPosture) {
+            writeBackServos(currentPosture);
+            Serial.printf("[servo] posture -> %s\n", currentPosture ? "SLOUCH" : "UPRIGHT");
+            lastPosture = currentPosture;
+        }
+
+        if (!is_waving) {
+            if (lastWavingState) {
+                writeArmNeutral();
+                Serial.println("[servo] waving -> OFF");
+            }
+            lastWavingState = false;
+            lastWaveStyle = -1;
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+
+        if (!lastWavingState) {
+            Serial.printf("[servo] waving -> ON (style %d)\n", wave_style);
+            wavePhaseDeg = ARM_WAVE_AMPLITUDE_DEG;
+            waveStepDeg = -ARM_WAVE_AMPLITUDE_DEG;
+            lastWaveStepMs = millis();
+            style2Angle = ARM_MIN_DEG;
+            style2ResetPending = false;
+            style2ResetMs = 0;
+        }
+
+        if (wave_style != lastWaveStyle) {
+            lastWaveStyle = wave_style;
+            if (wave_style == 2) {
+                style2Angle = ARM_MIN_DEG;
+                style2ResetPending = false;
+                style2ResetMs = 0;
+                writeMirroredArms(style2Angle);
+            } else if (wave_style == 3) {
+                writeArmNeutral();
+            }
+        }
+
+        unsigned long nowMs = millis();
+        switch (wave_style) {
+            case 0:
+                if (nowMs - lastWaveStepMs >= ARM_WAVE_STEP_MS) {
+                    doWaveStyleOneHand(wavePhaseDeg);
+
+                    wavePhaseDeg += waveStepDeg;
+                    if (wavePhaseDeg >= ARM_WAVE_AMPLITUDE_DEG || wavePhaseDeg <= -ARM_WAVE_AMPLITUDE_DEG) {
+                        waveStepDeg = -waveStepDeg;
+                    }
+                    lastWaveStepMs = nowMs;
+                }
+                break;
+
+            case 1:
+                if (nowMs - lastWaveStepMs >= ARM_WAVE_STEP_MS) {
+                    doWaveStyleBothHands(wavePhaseDeg);
+
+                    wavePhaseDeg += waveStepDeg;
+                    if (wavePhaseDeg >= ARM_WAVE_AMPLITUDE_DEG || wavePhaseDeg <= -ARM_WAVE_AMPLITUDE_DEG) {
+                        waveStepDeg = -waveStepDeg;
+                    }
+                    lastWaveStepMs = nowMs;
+                }
+                break;
+
+            case 2:
+                if (!style2ResetPending) {
+                    if (nowMs - lastWaveStepMs >= ARM_WAVE_STYLE2_STEP_MS) {
+                        writeMirroredArms(style2Angle);
+                        style2Angle += 2;
+                        if (style2Angle >= ARM_MAX_DEG) {
+                            style2Angle = ARM_MAX_DEG;
+                            style2ResetPending = true;
+                            style2ResetMs = nowMs;
+                        }
+                        lastWaveStepMs = nowMs;
+                    }
+                } else if (nowMs - style2ResetMs >= ARM_WAVE_STYLE2_RESET_MS) {
+                    style2Angle = ARM_MIN_DEG;
+                    writeMirroredArms(style2Angle);
+                    style2ResetPending = false;
+                    lastWaveStepMs = nowMs;
+                }
+                break;
+
+            case 3:
+                writeArmNeutral();
+                break;
+
+            default:
+                writeArmNeutral();
+                break;
+        }
+
+            lastWavingState = true;
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
-
-    servo3.detach();
-    servo4.detach();
 }
 
 // ─── WIFI ────────────────────────────────────────────────────────────────────
@@ -219,6 +349,15 @@ void setup() {
     ESP32PWM::allocateTimer(3);
 
 // TODO:    connectWiFi();
+    xTaskCreatePinnedToCore(
+        servoTask,
+        "servoTask",
+        4096,
+        nullptr,
+        1,
+        nullptr,
+        1
+    );
     initOledTask();
     Serial.println("[setup] Ready.");
 }
@@ -244,5 +383,21 @@ void loop() {
     // breathing();
     delay(2000);
     animState++;
+    is_slouching = !is_slouching;
+    is_waving = true;
+    wave_style++;
+    if(wave_style > 2) wave_style = 2;
     if(animState > 4) animState = 1;
+}
+
+void setSlouching(bool slouching) {
+    is_slouching = slouching;
+}
+
+void setWaving(bool waving) {
+    is_waving = waving;
+}
+
+void setWaveStyle(int style) {
+    wave_style = style;
 }
