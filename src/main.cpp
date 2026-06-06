@@ -428,8 +428,54 @@ void servoTask(void* parameter) {
     }
 }
 
-// ─── WIFI ────────────────────────────────────────────────────────────────────
-//TODO: WIFI connection handling could be more robust with event handlers instead of polling in loop()
+// ─── WIFI / NETWORK TASK ─────────────────────────────────────────────────────
+
+void connectWiFi() {
+    Serial.printf("[wifi] Connecting to %s", WIFI_SSID);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    while (WiFi.status() != WL_CONNECTED) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        Serial.print(".");
+    }
+    Serial.printf("\n[wifi] Connected — IP: %s\n", WiFi.localIP().toString().c_str());
+}
+
+void networkTask(void* parameter) {
+    (void)parameter;
+
+    connectWiFi();
+
+    String url = String("http://") + SERVER_HOST + ":" + SERVER_PORT + "/state";
+
+    for (;;) {
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("[wifi] Lost connection — reconnecting...");
+            connectWiFi();
+        }
+
+        HTTPClient http;
+        http.begin(url);
+        http.setTimeout(2000);
+        int code = http.GET();
+
+        if (code == HTTP_CODE_OK) {
+            String payload = http.getString();
+            StaticJsonDocument<128> doc;
+            if (deserializeJson(doc, payload) == DeserializationError::Ok) {
+                setSlouching(doc["is_slouching"]      | false);
+                setPersonPresent(doc["is_person_present"] | false);
+            } else {
+                Serial.println("[network] JSON parse error");
+            }
+        } else {
+            Serial.printf("[network] HTTP error: %d\n", code);
+        }
+
+        http.end();
+        vTaskDelay(pdMS_TO_TICKS(500));   // poll every 500 ms
+    }
+}
+
 // ─── SETUP ───────────────────────────────────────────────────────────────────
 
 void setup() {
@@ -447,7 +493,15 @@ void setup() {
     ESP32PWM::allocateTimer(2);
     ESP32PWM::allocateTimer(3);
 
-// TODO:    connectWiFi();
+    xTaskCreatePinnedToCore(
+        networkTask,
+        "networkTask",
+        8192,          // HTTPClient needs a bigger stack
+        nullptr,
+        1,
+        nullptr,
+        0              // core 0 — leave core 1 for servo/touch/oled
+    );
     xTaskCreatePinnedToCore(
         servoTask,
         "servoTask",
@@ -481,18 +535,24 @@ void triggerBothHandsWave() {
 }
 
 void printDebugHelp() {
-    Serial.println("[debug] commands:");
-    Serial.println("[debug]   p = toggle person present");
-    Serial.println("[debug]   s = toggle slouching");
-    Serial.println("[debug]   w = toggle waving");
-    Serial.println("[debug]   0..3 = set wave style");
-    Serial.println("[debug]   l = left touch on");
-    Serial.println("[debug]   L = left touch off");
-    Serial.println("[debug]   r = right touch on");
-    Serial.println("[debug]   R = right touch off");
-    Serial.println("[debug]   b = both touches on");
-    Serial.println("[debug]   n = both touches off");
-    Serial.println("[debug]   u = disable touch override");
+    Serial.println("[debug] ── robot ──────────────────────");
+    Serial.println("[debug]   p       = toggle person present");
+    Serial.println("[debug]   s       = toggle slouching");
+    Serial.println("[debug]   w       = toggle waving");
+    Serial.println("[debug]   0..3    = set wave style (0=one hand, 1=both, 2=sweep, 3=neutral)");
+    Serial.println("[debug] ── eyes ───────────────────────");
+    Serial.println("[debug]   H       = happy eyes");
+    Serial.println("[debug]   D       = sad eyes");
+    Serial.println("[debug]   X       = star burst (animated)");
+    Serial.println("[debug]   V       = heart pulse (animated)");
+    Serial.println("[debug]   C       = searching / closing");
+    Serial.println("[debug]   B       = breathing (happy → blink)");
+    Serial.println("[debug]   Z       = sad then closing");
+    Serial.println("[debug] ── touch ──────────────────────");
+    Serial.println("[debug]   l / L   = left touch on / off");
+    Serial.println("[debug]   r / R   = right touch on / off");
+    Serial.println("[debug]   b / n   = both on / both off");
+    Serial.println("[debug]   u       = disable touch override");
 }
 
 void handleDebugSerialInput() {
