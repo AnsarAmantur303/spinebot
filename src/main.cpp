@@ -131,9 +131,9 @@ const int SERVO1_PIN = 14;   // shoulder — CW on slouch LEFT
 const int SERVO2_PIN = 15;   // shoulder — CCW on slouch RIGHT
 const int SERVO3_PIN = 12;   // arm left
 const int SERVO4_PIN = 13;   // arm right
-const int TOUCH_LEFT_PIN = 16;
-const int TOUCH_RIGHT_PIN = 17;
-// const int BUZZER_PIN = 39;   // active buzzer — beep on 20-min timer
+const int TOUCH_LEFT_PIN  = 33;   // T8 — free when camera inactive, not PSRAM
+const int TOUCH_RIGHT_PIN = 32;   // T9 — free when camera inactive, not PSRAM
+// const int BUZZER_PIN = 39;   // active buzzher — beep on 20-min timer
 
 // ─── TIMING ──────────────────────────────────────────────────────────────────
 
@@ -607,12 +607,14 @@ void loop() {
     }
 
     if (personPresent) {
-        if (is_slouching) {
-            writeBackServos(true);
-            animState = 2;
-        } else {
-            writeBackServos(false);
-            animState = 1;
+        if (!is_waving) {
+            if (is_slouching) {
+                writeBackServos(true);
+                animState = 2;
+            } else {
+                writeBackServos(false);
+                animState = 1;
+            }
         }
 
         if (!lastPersonPresent) {
