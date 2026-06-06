@@ -22,7 +22,7 @@
 
 #include <Arduino.h>
 #include "eyes.h"
-#include "esp_camera.h"
+// #include "esp_camera.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -127,12 +127,12 @@ void initOledTask() {
 // ─── SERVO / BUZZER PINS ─────────────────────────────────────────────────────
 // Camera occupies GPIOs 4-18, so use 19+ for peripherals
 
-const int SERVO1_PIN = 14;   // shoulder — CW on slouch LEFT
-const int SERVO2_PIN = 15;   // shoulder — CCW on slouch RIGHT
-const int SERVO3_PIN = 12;   // arm left
-const int SERVO4_PIN = 13;   // arm right
-const int TOUCH_LEFT_PIN  = 33;   // T8 — free when camera inactive, not PSRAM
-const int TOUCH_RIGHT_PIN = 32;   // T9 — free when camera inactive, not PSRAM
+const int SERVO1_PIN = -1;   // shoulder — CW on slouch LEFT
+const int SERVO2_PIN = -1;   // shoulder — CCW on slouch RIGHT
+const int SERVO3_PIN = 48;   // arm left
+const int SERVO4_PIN = 47;   // arm right
+const int TOUCH_LEFT_PIN  = 41;   // T8 — free when camera inactive, not PSRAM
+const int TOUCH_RIGHT_PIN = 42;   // T9 — free when camera inactive, not PSRAM
 // const int BUZZER_PIN = 39;   // active buzzher — beep on 20-min timer
 
 // ─── TIMING ──────────────────────────────────────────────────────────────────

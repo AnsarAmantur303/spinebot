@@ -369,6 +369,8 @@ void show_sad_then() {
 // ================================================================
 void initEyes() {
     delay(250);
+    Wire.begin(40,38);
+    delay(1000);
     display.begin(i2c_Address, true);
     display.clearDisplay();
     display.display();
